@@ -1,4 +1,5 @@
 
+from secrets import choice
 from turtle import mode
 
 
@@ -12,7 +13,6 @@ def ask_yes_no(prompt: str) -> bool:
         if ans in ("y", "n"):
             return ans == "y"
         print("Please enter y or n.")
-
 def collect_players(min_n=MIN_PLAYERS, max_n=MAX_PLAYERS):
     """
     Ask for player names:
@@ -51,8 +51,6 @@ def collect_players(min_n=MIN_PLAYERS, max_n=MAX_PLAYERS):
         players.append(name)
 
     return players
-
-
 def init_stats(players):
     return {
         p: {"wins": 0, "losses": 0, "played": 0, "points": 0, "pf": 0, "pa": 0}
@@ -99,14 +97,12 @@ def pick_four(players):
             continue
 
         # convert to 0-based indices and return
-        return [n - 1 for n in nums]
-    
-# --- Fairness state helpers ---
+        return [n - 1 for n in nums]  
 
+# --- Fairness state helpers ---
 def pair_key(a, b):
     """Unordered key for a 2-player pair (so ('Kei','Kaako') == ('Kaako','Kei'))."""
     return tuple(sorted((a, b)))
-
 def init_fairness(players):
     """Create counters the scheduler will use later."""
     return {
@@ -114,11 +110,9 @@ def init_fairness(players):
         "opponent": {},                    # (A,B) -> times they faced each other
         "rest": {p: 0 for p in players},   # A -> times A rested
     }
-
 def _bump(d, key, by=1):
     """Increment a dict counter safely."""
     d[key] = d.get(key, 0) + by
-
 def update_fairness(fair, team1, team2, resting):
     """Update partner/opponent/rest counters after a match."""
     a, b = team1
@@ -136,12 +130,12 @@ def update_fairness(fair, team1, team2, resting):
     # rests
     for p in resting:
         fair["rest"][p] = fair["rest"].get(p, 0) + 1
-
 # (Optional) quick peek printer while you test
 def debug_fairness(fair):
     p_used = {f"{a}+{b}": n for (a, b), n in fair["partner"].items()}
     print("partners used:", p_used)
     print("rests:", fair["rest"])
+
 
 def prompt_winner():
     """Return 1 or 2 after validating input."""
@@ -150,7 +144,6 @@ def prompt_winner():
         if w in ("1", "2"):
             return int(w)
         print("Please type 1 or 2.")
-
 def prompt_scores(team1, team2, winner_team):
     """Return (s1, s2) for team1 vs team2 after validating your rules."""
     label1 = f"{team1[0]}+{team1[1]}"
@@ -195,7 +188,12 @@ def prompt_scores(team1, team2, winner_team):
             continue
 
         return s1, s2
-
+    
+def confirm_result(team1, team2, winner, s1, s2):
+    t1 = f"{team1[0]}+{team1[1]}"
+    t2 = f"{team2[0]}+{team2[1]}"
+    print(f"\nConfirm result:  {t1}  {s1}-{s2}  {t2}   (winner: team {winner})")
+    return ask_yes_no("Is this correct? (y/n): ")
 def apply_result(stats, team1, team2, winner_team, s1, s2):
     winners = team1 if winner_team == 1 else team2
     losers  = team2 if winner_team == 1 else team1
@@ -215,7 +213,6 @@ def apply_result(stats, team1, team2, winner_team, s1, s2):
         stats[p]["played"] += 1
         stats[p]["pf"]     += lose_score
         stats[p]["pa"]     += win_score
-
 def show_leaderboard(stats):
     print("\nLeaderboard")
     rows = sorted(
@@ -233,7 +230,6 @@ def show_leaderboard(stats):
         )
 
 # --- Candidate generation (no imports) ---
-
 def generate_candidates(players):
     """
     Yield all possible matches as (team1, team2, resting),
@@ -289,7 +285,6 @@ def score_candidate(team1, team2, resting, fair, stats):
     score -= W_REST * rest_pen
 
     return score
-
 def suggest_next_indices(players, fair, stats):
     """
     Choose the highest-scoring candidate and return four indices
@@ -308,12 +303,42 @@ def suggest_next_indices(players, fair, stats):
     idxs = [players.index(a), players.index(b), players.index(c), players.index(d)]
     return idxs
 
+# --- Match history helpers ---
+
+def record_match(matches, round_no, team1, team2, winner, s1, s2, resting):
+    """Append one match to history."""
+    matches.append({
+        "round": round_no,
+        "team1": tuple(team1),
+        "team2": tuple(team2),
+        "winner": winner,          # 1 or 2
+        "score": (s1, s2),         # (team1, team2)
+        "resting": tuple(resting),
+    })
+def print_recap(matches):
+    """Pretty-print all recorded matches so far."""
+    if not matches:
+        print("\nNo matches recorded yet.")
+        return
+    print("\n=== Match Recap ===")
+    for m in matches:
+        t1 = f"{m['team1'][0]}+{m['team1'][1]}"
+        t2 = f"{m['team2'][0]}+{m['team2'][1]}"
+        s1, s2 = m["score"]
+        star1 = "★" if m["winner"] == 1 else " "
+        star2 = "★" if m["winner"] == 2 else " "
+        rest = ", ".join(m["resting"])
+        # R01  ★  Kei+Mina   12-10  Tai+Misa           rest: Kaako, Kane
+        print(f"R{m['round']:02d}  {star1} {t1:12} {s1:>2}-{s2:<2} {t2:12} {star2}  rest: {rest}")
+
 
 def main():
     players = collect_players()          # <- interactive list
     stats = init_stats(players)
-
     fair = init_fairness(players)
+
+    matches = []        
+    round_no = 1
 
     while True:
         show_players(players)
@@ -332,17 +357,39 @@ def main():
         print(f"\nMatch: {team1[0]} + {team1[1]}  vs  {team2[0]} + {team2[1]}")
         print("Resting:", ", ".join(resting))
 
-        winner = prompt_winner()
-        s1, s2 = prompt_scores(team1, team2, winner)
+        # get a result, but confirm before saving
+        while True:
+            winner = prompt_winner()
+            s1, s2 = prompt_scores(team1, team2, winner)
+            if confirm_result(team1, team2, winner, s1, s2):
+                break
+            print("Okay, let's re-enter winner and scores...")
+
         apply_result(stats, team1, team2, winner, s1, s2)
 
+
         update_fairness(fair, team1, team2, resting)
+        record_match(matches, round_no, team1, team2, winner, s1, s2, resting)
         show_leaderboard(stats)
 
-        again = input("\nPlay another? (y/n): ").strip().lower()
-        if again != "y":
+        # ask what to do next (re-ask if user types 'r')
+        while True:
+            choice = input("\nPlay another? (y/n)  |  r = recap: ").strip().lower()
+            if choice == "r":
+                print_recap(matches)
+                continue          # stay in this prompt loop
+            if choice in ("y", "n"):
+                break             # valid answer; leave this prompt loop
+            print("Please type y, n, or r.")
+
+        if choice != "y":
+            print("\n=== Final Leaderboard ===")
+            show_leaderboard(stats)
+            print_recap(matches)
             print("みんな、頑張ったね!")
-            break
+            return
+
+        round_no += 1
 
 
 if __name__ == "__main__":
