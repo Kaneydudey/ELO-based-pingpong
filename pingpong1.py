@@ -1,4 +1,7 @@
 
+from turtle import mode
+
+
 MIN_PLAYERS = 4
 MAX_PLAYERS = 8
 
@@ -98,6 +101,48 @@ def pick_four(players):
         # convert to 0-based indices and return
         return [n - 1 for n in nums]
     
+# --- Fairness state helpers ---
+
+def pair_key(a, b):
+    """Unordered key for a 2-player pair (so ('Kei','Kaako') == ('Kaako','Kei'))."""
+    return tuple(sorted((a, b)))
+
+def init_fairness(players):
+    """Create counters the scheduler will use later."""
+    return {
+        "partner": {},                     # (A,B) -> times they partnered
+        "opponent": {},                    # (A,B) -> times they faced each other
+        "rest": {p: 0 for p in players},   # A -> times A rested
+    }
+
+def _bump(d, key, by=1):
+    """Increment a dict counter safely."""
+    d[key] = d.get(key, 0) + by
+
+def update_fairness(fair, team1, team2, resting):
+    """Update partner/opponent/rest counters after a match."""
+    a, b = team1
+    c, d = team2
+
+    # partners (unordered)
+    _bump(fair["partner"], pair_key(a, b))
+    _bump(fair["partner"], pair_key(c, d))
+
+    # opponents (unordered): each cross pairing between teams
+    for x in team1:
+        for y in team2:
+            _bump(fair["opponent"], pair_key(x, y))
+
+    # rests
+    for p in resting:
+        fair["rest"][p] = fair["rest"].get(p, 0) + 1
+
+# (Optional) quick peek printer while you test
+def debug_fairness(fair):
+    p_used = {f"{a}+{b}": n for (a, b), n in fair["partner"].items()}
+    print("partners used:", p_used)
+    print("rests:", fair["rest"])
+
 def prompt_winner():
     """Return 1 or 2 after validating input."""
     while True:
@@ -187,14 +232,99 @@ def show_leaderboard(stats):
             f"GP:{gp:2d}  PF:{pf:3d}  PA:{pa:3d}  PF/G:{pf_avg:4.1f}  PA/G:{pa_avg:4.1f}"
         )
 
+# --- Candidate generation (no imports) ---
+
+def generate_candidates(players):
+    """
+    Yield all possible matches as (team1, team2, resting),
+    where team1/team2 are tuples of player names.
+    For any 4 picked players there are 3 unique 2v2 splits:
+    (0,1 vs 2,3), (0,2 vs 1,3), (0,3 vs 1,2).
+    """
+    n = len(players)
+    cands = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            for k in range(j + 1, n):
+                for l in range(k + 1, n):
+                    quad = [players[i], players[j], players[k], players[l]]
+                    a, b, c, d = quad
+                    resting = [p for p in players if p not in quad]
+                    cands.append(((a, b), (c, d), resting))
+                    cands.append(((a, c), (b, d), resting))
+                    cands.append(((a, d), (b, c), resting))
+    return cands
+
+# --- Heuristic scoring ---
+
+W_PARTNER = 10   # penalize repeated partners strongly
+W_OPP     = 3    # penalize repeated opponents
+W_SPREAD  = 2    # penalize uneven 'played' among the 4
+W_REST    = 1    # penalize resting players who already rested a lot
+
+def score_candidate(team1, team2, resting, fair, stats):
+    """
+    Higher score = better (fresher partners/opponents, balanced play/rest).
+    """
+    # partner repeats
+    p1 = fair["partner"].get(pair_key(*team1), 0)
+    p2 = fair["partner"].get(pair_key(*team2), 0)
+    score = 0
+    score -= W_PARTNER * (p1 + p2)
+
+    # opponent repeats (all cross pairings)
+    opp = 0
+    for x in team1:
+        for y in team2:
+            opp += fair["opponent"].get(pair_key(x, y), 0)
+    score -= W_OPP * opp
+
+    # balance: prefer sets of four who have played a similar amount
+    plays = [stats[p]["played"] for p in (team1[0], team1[1], team2[0], team2[1])]
+    spread = max(plays) - min(plays)
+    score -= W_SPREAD * spread
+
+    # rest fairness: avoid resting people who already rested a lot
+    rest_pen = sum(fair["rest"].get(p, 0) for p in resting)
+    score -= W_REST * rest_pen
+
+    return score
+
+def suggest_next_indices(players, fair, stats):
+    """
+    Choose the highest-scoring candidate and return four indices
+    in the order [team1_a, team1_b, team2_a, team2_b].
+    """
+    best = None
+    best_score = float("-inf")
+    for team1, team2, resting in generate_candidates(players):
+        s = score_candidate(team1, team2, resting, fair, stats)
+        if s > best_score:
+            best_score = s
+            best = (team1, team2)
+
+    # convert chosen teams (names) back to indices
+    (a, b), (c, d) = best
+    idxs = [players.index(a), players.index(b), players.index(c), players.index(d)]
+    return idxs
+
+
 def main():
     players = collect_players()          # <- interactive list
     stats = init_stats(players)
 
+    fair = init_fairness(players)
+
     while True:
         show_players(players)
 
-        idxs = pick_four(players)        # everything else already accepts 'players'
+        # idxs = pick_four(players)                    # old manual-only
+        mode = input("\nNext match: (a)uto or (m)anual? ").strip().lower()
+        if mode == "m":
+            idxs = pick_four(players)
+        else:
+            idxs = suggest_next_indices(players, fair, stats)
+        # everything else already accepts 'players'
         team1 = (players[idxs[0]], players[idxs[1]])
         team2 = (players[idxs[2]], players[idxs[3]])
         resting = [name for i, name in enumerate(players) if i not in idxs]
@@ -205,6 +335,8 @@ def main():
         winner = prompt_winner()
         s1, s2 = prompt_scores(team1, team2, winner)
         apply_result(stats, team1, team2, winner, s1, s2)
+
+        update_fairness(fair, team1, team2, resting)
         show_leaderboard(stats)
 
         again = input("\nPlay another? (y/n): ").strip().lower()
