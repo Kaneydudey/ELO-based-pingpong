@@ -1,4 +1,54 @@
-PLAYERS = ["Kaako", "Kei", "Tai", "Misa", "Kane", "Mina"]
+
+MIN_PLAYERS = 4
+MAX_PLAYERS = 8
+
+def ask_yes_no(prompt: str) -> bool:
+    """Return True for 'y', False for 'n' (keeps asking otherwise)."""
+    while True:
+        ans = input(prompt).strip().lower()
+        if ans in ("y", "n"):
+            return ans == "y"
+        print("Please enter y or n.")
+
+def collect_players(min_n=MIN_PLAYERS, max_n=MAX_PLAYERS):
+    """
+    Ask for player names:
+      - require at least min_n (default 4)
+      - allow adding up to max_n (default 8)
+      - prevent empty/duplicate names (case-insensitive)
+    Returns a list of names in the *entered* order.
+    """
+    players = []
+    def name_taken(name):  # case-insensitive duplicate check
+        low = name.strip().lower()
+        return any(low == p.lower() for p in players)
+
+    # required first 4
+    while len(players) < min_n:
+        n = len(players) + 1
+        name = input(f"add player {n}: ").strip()
+        if not name:
+            print("Name cannot be empty.")
+            continue
+        if name_taken(name):
+            print("That name is already added.")
+            continue
+        players.append(name)
+
+    # optional extra players up to max
+    while len(players) < max_n and ask_yes_no("add new player? (y/n): "):
+        n = len(players) + 1
+        name = input(f"add player {n}: ").strip()
+        if not name:
+            print("Name cannot be empty.")
+            continue
+        if name_taken(name):
+            print("That name is already added.")
+            continue
+        players.append(name)
+
+    return players
+
 
 def init_stats(players):
     return {
@@ -138,19 +188,20 @@ def show_leaderboard(stats):
         )
 
 def main():
-    stats = init_stats(PLAYERS)
+    players = collect_players()          # <- interactive list
+    stats = init_stats(players)
 
     while True:
-        show_players(PLAYERS)
+        show_players(players)
 
-        idxs = pick_four(PLAYERS)              # e.g. [0,1,2,3]
-        team1 = (PLAYERS[idxs[0]], PLAYERS[idxs[1]])
-        team2 = (PLAYERS[idxs[2]], PLAYERS[idxs[3]])
-        resting = [name for i, name in enumerate(PLAYERS) if i not in idxs]
+        idxs = pick_four(players)        # everything else already accepts 'players'
+        team1 = (players[idxs[0]], players[idxs[1]])
+        team2 = (players[idxs[2]], players[idxs[3]])
+        resting = [name for i, name in enumerate(players) if i not in idxs]
 
         print(f"\nMatch: {team1[0]} + {team1[1]}  vs  {team2[0]} + {team2[1]}")
         print("Resting:", ", ".join(resting))
-        
+
         winner = prompt_winner()
         s1, s2 = prompt_scores(team1, team2, winner)
         apply_result(stats, team1, team2, winner, s1, s2)
@@ -160,6 +211,7 @@ def main():
         if again != "y":
             print("みんな、頑張ったね!")
             break
+
 
 if __name__ == "__main__":
     main()
