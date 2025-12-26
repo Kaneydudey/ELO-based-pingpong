@@ -331,6 +331,100 @@ def print_recap(matches):
         # R01  ★  Kei+Mina   12-10  Tai+Misa           rest: Kaako, Kane
         print(f"R{m['round']:02d}  {star1} {t1:12} {s1:>2}-{s2:<2} {t2:12} {star2}  rest: {rest}")
 
+# --- Rivalries & Chemistry (computed from matches) ---
+
+def analyze_rivals(matches):
+    """
+    Build head-to-head (vs) and with-partner (withp) records for each player,
+    then pick:
+      - nemesis: opponent with the worst net record (losses - wins) [min 2 games]
+      - snack:   opponent you dominate the most (wins - losses)   [min 2 games]
+      - bestchem: partner you do best with (wins - losses)        [min 2 games]
+    Returns: {player: {"nemesis": "Name (W-L)", "snack": "...", "bestchem": "..."}}
+    """
+    vs = {}     # vs[p][o] = {"w": x, "l": y} from p's perspective
+    withp = {}  # withp[p][m] = {"w": x, "l": y} with partner m
+
+    def upd_team(team, oppteam, team_won):
+        # team = (p0, p1); oppteam = (q0, q1)
+        for i in range(2):
+            p = team[i]
+            m = team[1 - i]     # partner
+            # partner record
+            withp.setdefault(p, {}).setdefault(m, {"w": 0, "l": 0})
+            if team_won: withp[p][m]["w"] += 1
+            else:        withp[p][m]["l"] += 1
+            # opponent records
+            for o in oppteam:
+                vs.setdefault(p, {}).setdefault(o, {"w": 0, "l": 0})
+                if team_won: vs[p][o]["w"] += 1
+                else:        vs[p][o]["l"] += 1
+
+    for m in matches:
+        team1 = m["team1"]; team2 = m["team2"]; winner = m["winner"]
+        upd_team(team1, team2, winner == 1)
+        upd_team(team2, team1, winner == 2)
+
+    # choose best/worst with simple keys; require at least 2 games for a pick
+    out = {}
+    names = set(list(vs.keys()) + list(withp.keys()))
+    for p in names:
+        # nemesis: maximize (losses - wins), tie-break by losses, games played, name
+        nem = "-"
+        if p in vs:
+            best = None
+            for o, rec in vs[p].items():
+                played = rec["w"] + rec["l"]
+                if played < 2:      # ignore trivial encounters
+                    continue
+                key = (rec["l"] - rec["w"], rec["l"], played, o)
+                if best is None or key > best[0]:
+                    best = (key, o, rec)
+            if best:
+                o, rec = best[1], best[2]
+                nem = f"{o} ({rec['w']}-{rec['l']})"
+
+        # snack: maximize (wins - losses), tie-break by wins, games played, name
+        sna = "-"
+        if p in vs:
+            best = None
+            for o, rec in vs[p].items():
+                played = rec["w"] + rec["l"]
+                if played < 2:
+                    continue
+                key = (rec["w"] - rec["l"], rec["w"], played, o)
+                if best is None or key > best[0]:
+                    best = (key, o, rec)
+            if best:
+                o, rec = best[1], best[2]
+                sna = f"{o} ({rec['w']}-{rec['l']})"
+
+        # bestchem: maximize (wins - losses) with partner
+        bc = "-"
+        if p in withp:
+            best = None
+            for m, rec in withp[p].items():
+                played = rec["w"] + rec["l"]
+                if played < 2:
+                    continue
+                key = (rec["w"] - rec["l"], rec["w"], played, m)
+                if best is None or key > best[0]:
+                    best = (key, m, rec)
+            if best:
+                m, rec = best[1], best[2]
+                bc = f"{m} ({rec['w']}-{rec['l']})"
+
+        out[p] = {"nemesis": nem, "snack": sna, "bestchem": bc}
+    return out
+
+
+def print_rivals_board(rel):
+    """Pretty print the nemesis/snack/bestchem board."""
+    print("\nRivals & Chemistry  (records are from each player's perspective)")
+    for name in sorted(rel.keys()):
+        r = rel[name]
+        print(f"{name:12}  nemesis: {r['nemesis']:<18}  snack: {r['snack']:<18}  bestchem: {r['bestchem']}")
+
 
 def main():
     players = collect_players()          # <- interactive list
@@ -386,6 +480,12 @@ def main():
             print("\n=== Final Leaderboard ===")
             show_leaderboard(stats)
             print_recap(matches)
+
+            # NEW: rivals/chemistry board
+            rel = analyze_rivals(matches)
+            print_rivals_board(rel)
+
+
             print("みんな、頑張ったね!")
             return
 
